@@ -2,67 +2,62 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>何鑫實業 - 銷貨戰情室</title>
+    <title>何鑫實業 - 銷售戰情室</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
     <style>
-        body { font-family: "Microsoft JhengHei", sans-serif; background: #f8f9fa; padding: 30px; }
-        .box { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); max-width: 900px; margin: auto; }
-        .header { text-align: center; border-bottom: 2px solid #eee; margin-bottom: 20px; padding-bottom: 10px; }
-        .upload-section { background: #e9ecef; padding: 20px; border-radius: 10px; margin-bottom: 30px; text-align: center; }
-        .btn { background: #28a745; color: white; border: none; padding: 12px 30px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; }
-        .btn:hover { background: #218838; }
-        #status { margin-top: 10px; font-weight: bold; color: #555; }
-        canvas { max-height: 400px; }
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #f0f2f5; padding: 20px; }
+        .box { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 1000px; margin: auto; }
+        .header { text-align: center; margin-bottom: 25px; }
+        .upload-zone { background: #f8f9fa; border: 2px dashed #ccc; padding: 20px; text-align: center; border-radius: 10px; margin-bottom: 30px; }
+        .btn { background: #007bff; color: white; border: none; padding: 10px 25px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        #status { margin-top: 10px; font-weight: bold; color: #666; }
+        .chart-container { position: relative; height: 50vh; width: 100%; }
     </style>
 </head>
 <body>
     <div class="box">
         <div class="header">
-            <h1>🏬 銷貨業績趨勢戰情室</h1>
+            <h1>📊 年度銷貨戰情監控室</h1>
         </div>
 
-        <div class="upload-section">
+        <div class="upload-zone">
             <input type="file" id="fileInput" accept=".xls,.xlsx" />
-            <button class="btn" onclick="uploadData()">確認上傳並更新圖表</button>
+            <button class="btn" onclick="uploadData()">上傳最新明細表</button>
             <div id="status">系統就緒</div>
         </div>
 
-        <div>
+        <div class="chart-container">
             <canvas id="myChart"></canvas>
         </div>
     </div>
 
     <script>
-        // ！！！請替換成你的 Google Apps Script 部署網址！！！
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbzSpLmbTrBKyCwdweo5yD2OK6BA4KLHSNiDiH0sAeZco1mnBa8b9M35EqOs6iyJ028/exec";
+        // ！！！請替換成你的 Google Apps Script 網址！！！
+        const GAS_URL = "YOUR_GAS_URL";
+
+        // 註冊標籤外掛
+        Chart.register(ChartDataLabels);
 
         async function uploadData() {
             const file = document.getElementById('fileInput').files[0];
             if (!file) return alert("請先選擇檔案！");
-
-            document.getElementById('status').innerText = "🚀 正在解析 Excel 並過濾非銷貨項目...";
+            document.getElementById('status').innerText = "⏳ 處理中...";
             
             const reader = new FileReader();
             reader.onload = async function(e) {
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, {type: 'array'});
-                const sheet = workbook.Sheets[workbook.SheetNames[0]];
-                // 從第 8 行開始讀取 (range: 7)
-                const rows = XLSX.utils.sheet_to_json(sheet, {header: 1, range: 7});
+                const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1, range: 7});
 
-                document.getElementById('status').innerText = "☁️ 正在與雲端同步...";
-                
                 try {
-                    const response = await fetch(GAS_URL, {
-                        method: 'POST',
-                        body: JSON.stringify({data: rows})
-                    });
+                    const response = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify({data: rows}) });
                     const result = await response.json();
                     document.getElementById('status').innerText = result.result;
-                    loadDashboard(); // 重新整理圖表
+                    loadDashboard();
                 } catch(err) {
-                    document.getElementById('status').innerText = "❌ 連線失敗，請檢查網路或網址";
+                    document.getElementById('status').innerText = "❌ 連線失敗";
                 }
             };
             reader.readAsArrayBuffer(file);
@@ -73,41 +68,75 @@
                 const response = await fetch(GAS_URL);
                 const data = await response.json();
                 
-                // 數據處理：依月份與類別分類
-                const monthlyData = {}; // { "2026-01": { "國產": 0, ... }, ... }
+                // 初始化 1-12 月數據
+                const months = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
+                const categories = ["國產", "亞東", "台泥", "其他"];
+                const chartData = {
+                    "國產": Array(12).fill(0),
+                    "亞東": Array(12).fill(0),
+                    "台泥": Array(12).fill(0),
+                    "其他": Array(12).fill(0)
+                };
 
                 data.forEach(r => {
                     const date = new Date(r[0]);
-                    const month = date.getFullYear() + "-" + ("0" + (date.getMonth() + 1)).slice(-2);
+                    const mIdx = date.getMonth(); // 0-11
                     const type = r[1];
                     const amount = r[3];
-
-                    if (!monthlyData[month]) monthlyData[month] = {"國產": 0, "亞東": 0, "台泥": 0, "其他": 0};
-                    monthlyData[month][type] += amount;
+                    if (chartData[type]) chartData[type][mIdx] += amount;
                 });
-
-                const months = Object.keys(monthlyData).sort();
-                const categories = ["國產", "亞東", "台泥", "其他"];
-                const colors = ['#4285f4', '#db4437', '#f4b400', '#0f9d58'];
-
-                const datasets = categories.map((cat, i) => ({
-                    label: cat,
-                    data: months.map(m => monthlyData[m][cat]),
-                    backgroundColor: colors[i]
-                }));
 
                 const ctx = document.getElementById('myChart').getContext('2d');
                 if (window.chart) window.chart.destroy();
+
                 window.chart = new Chart(ctx, {
                     type: 'bar',
-                    data: { labels: months, datasets: datasets },
+                    data: {
+                        labels: months.map(m => m + "月"),
+                        datasets: [
+                            { label: '國產', data: chartData["國產"], backgroundColor: '#4285f4' },
+                            { label: '亞東', data: chartData["亞東"], backgroundColor: '#db4437' },
+                            { label: '台泥', data: chartData["台泥"], backgroundColor: '#f4b400' },
+                            { label: '其他', data: chartData["其他"], backgroundColor: '#0f9d58' }
+                        ]
+                    },
                     options: {
                         responsive: true,
-                        scales: { x: { stacked: false }, y: { beginAtZero: true, title: { display: true, text: '未稅總額' } } },
-                        plugins: { title: { display: true, text: '每月客戶類別銷貨統計' } }
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { stacked: true }, // 堆疊顯示更清楚總額
+                            y: { stacked: true, beginAtZero: true }
+                        },
+                        plugins: {
+                            datalabels: {
+                                anchor: 'end',
+                                align: 'top',
+                                formatter: (value, context) => {
+                                    // 只在最頂部的 dataset 顯示總額
+                                    if (context.datasetIndex === context.chart.data.datasets.length - 1) {
+                                        let sum = 0;
+                                        context.chart.data.datasets.forEach(ds => {
+                                            sum += ds.data[context.dataIndex];
+                                        });
+                                        return sum > 0 ? '$' + Math.round(sum).toLocaleString() : '';
+                                    }
+                                    return null;
+                                },
+                                font: { weight: 'bold', size: 12 }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    footer: (items) => {
+                                        let total = 0;
+                                        items.forEach(i => total += i.parsed.y);
+                                        return '月總計: $' + total.toLocaleString();
+                                    }
+                                }
+                            }
+                        }
                     }
                 });
-            } catch(e) { console.log("圖表載入失敗", e); }
+            } catch(e) { console.error(e); }
         }
 
         window.onload = loadDashboard;
